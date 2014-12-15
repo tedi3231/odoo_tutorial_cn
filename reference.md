@@ -305,8 +305,150 @@ Python直接使用QWeb的情况大部分是在controllers中，这里的模板�
 	
 	如: <span t-record="browse_record(res.partner,1)" t-field="phone">+1 555 555 8-69 </span>
 
-** class openerp.addons.base.ir.ir_qweb.FieldConverter(pool,cr) **:
+**class openerp.addons.base.ir.ir_qweb.FieldConverter(pool,cr)**:
 	
 用来将一个t-field字段转换为一个html的输出。
+
+**to_html()**是从QWeb转换的入口点。包含以下内容：
+
+* 使用**record_to_html()**将record值转化为html
+* 在根结点上生成元数据属性（data-oe-）
+* 通过**render_element()**产生根结点本身
+
+**attributes(cr,uid,field_name,record,options,source_element,g_att,t_att,qweb_context,context=None)**
+
+产生元数据属性(在根结点上以 data-oe- 为前缀的属性)。属性值由父一级进行escape。
+默认的属性如下：
+
+* model			record模型的名称
+* id 			字段所属record的Id
+* field 		被转换字段的名称
+* type			逻辑字段类型(widget, may not match the field’s type, may not be any Field subclass name,不知道如何翻译)
+* translate	一个布尔类型的标志位（0或1），表示此字段是否能够翻译
+* expression	原表达式
+
+**record_to_html(cr,uid,field_name,record,options=None,context=None)**
+
+转换指定智能记录的某个字段为HTML
+
+**render_element(cr,uid,source_element,t_att,g_att,qweb_context,content)**
 	
- 	
+最终渲染的钩子，默认情况下直接调用ir.qweb的**render_element**
+
+**to_html(cr,uid,field_name,record,options,source_element,t_att,g_att,qweb_context,context=None)**
+
+把 **t-field**转换为HTML输出。**t-field**可能被**t-field-options**扩展，这个属性的值是一个JSON的字典类型，存放一些配置值。（译者注：{'widget':'image'}）.一个默认的属性就是 **widget**，可以覆原来的字段类型。
+
+**user_lang(cr,uid,context)**
+
+根据context中存储的语言代码获取res.lang对象。如果上下文中没有语言代码或语言代码无效则默认为en_US.
+返回值类型为 res.lang browse_record。
+
+**value_to_html(cr,uid,value,field,options=None,context=None)**
+
+将一个单独的值转换为html输出。
+
+
+## Javascript 
+-----
+**特定指令**
+
+**定义模板**
+
+**t-name**指令只能放在模板文件的最顶层(直接放在文档的根据下)。
+
+	<templates>
+		<t t-name='template-name'>
+			<!-- template code -->
+		</t>
+	</templates>
+不需要其他的参数，但可以使用**<t>**元素或其他的。使用**<t>**元素时，**<t>**应该包含一个子元素。
+模板名称可以是任意字符串，但多个相关模板(例如sub-templates)一般会按惯例使用圆点分隔名称来显示层次关系。
+
+**模板的继承**
+
+模板的继承通常用来修改已经存在的模板，例如添加一些内容到其他模块中的模板上。
+
+模板的继承使用**t-extends**指令，以被继承的模板名称为参数。
+The alteration is then performed with any number of t-jquery sub-directives:（不会翻译）
+
+	<t t-extends="base.template">
+		<t t-jquery="ul" t-operation="append">
+			<li>new element</li>
+		</t>
+	</t>
+**t-jquery**指令使用**css**选择器。选择器会在被扩展的模板上筛选出相应的元素并招待**t-operation**操作。**t-operation**操作的参数可以下面的值：
+
+* append 		结点中的内容会被放到筛选元素内部的最后
+* prepend 		结点中的内容前置到筛选元素中
+* before		将内容放到筛选元素的前面
+* after 		将内容放到筛选元素的后面
+* inner 		将内容替换筛选元素子元素
+* replace 		将内容替换筛选元素本身
+
+**没有操作**
+
+如果没有指定t-operation,模板的身体是解释为javascript代码和执行上下文节点。
+
+**警告**
+
+这种操作要比其他操作更强大，也更难调试和维护，建议尽量避免使用。
+
+#### 调试
+QWeb的javascript实现提供了几个调试的钩子:
+
+**t-log** 
+
+使用一个表达式参数，在渲染过程中计算表达式并使用console.log记录生成的结果。
+
+**t-debug** 
+
+在渲染模板的时候触发一个调试点
+
+**t-js** 
+
+结点为的内容是javascript代码，当模板渲染时会被执行。Takes a context parameter, which is the name under which the rendering context will be available in the t-js‘s body。（不会翻译）
+
+#### 助手类(Helpers)
+**openerp.qweb**
+
+一个QWeb2.Engine()的实例，且已加载了所有模块定义的模板文件，引用了标准助手类**_(underscore)**、**_t(翻译函数)**和**JSON**。
+
+openerp.web.render可以很轻松的被用来渲染基本模块的模板。
+
+#### API	
+**class QWeb2.Engine()**
+
+是QWEB的渲染者，包含了绝大部分的QWeb逻辑（加载、解析、编译和渲染模板)。OpenERP为用户实例化一个对象，并将其赋值给instance.web.qweb。它同时也加载了所有模块下的模板文件到QWeb实例。**QWeb2.Engine()**也作为模板的命名空间。
+
+**QWeb2.Engine.render(template[,context]])**
+
+渲染一个之前加载好的模板为字符串，在模板的渲染过程中从**context**查找变量。
+
+**参数**
+
+* template 	字符型，要渲染的模板名称
+* context		模板渲染的上下文
+
+**返回值**		字符串
+
+
+引擎也暴露了一个add_template的方法，在一些场景下会比较有用。（e.g. if you need a separate template namespace with, in OpenERP Web, Kanban views get their own QWeb2.Engine() instance so their templates don’t collide with more general “module” templates)。
+
+**QWeb2.Engine.add_template(templates)**
+
+在QWeb实例中加载一个模板文件（模板的集合，一个模板文件中可以包含多个模板）。参数**templates**可以为下面的几种情况：
+
+* XML字符串，QWeb会尝试将它转化为一个XML文档，然后再加载
+* URL地址，QWeb会尝试去下载URL地址的内容，然后再加载 
+* 文档或结点,QWeb将遍历文档的第一级(根)提供的子节点和加载任何命名模板或模板覆盖。
+
+QWeb2.Engine也暴露了一些可用于自定义的属性：
+
+* QWeb2.Engine.prefix 指定指令的前缀，默认为**t**
+* QWeb2.Engine.debug	 布尔标志位，指定引擎是否处于调试模式。一般情况下，QWeb会拦截渲染过程中发生的所有错误。在调试模式
+* Qweb2.Engine.jQuery The jQuery instance used during template inheritance processing. Defaults to window.jQuery.
+* QWeb2.Engine.preprocess_node 一个函数，在编译dom节点到模板代码执行。在OpenERP WEB，这个经常被用来自动翻译文本内容和一些模板中的属性。默认为null。
+
+
+		
