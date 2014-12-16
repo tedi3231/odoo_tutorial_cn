@@ -1,4 +1,200 @@
+#ORM
+----
+##记录集（Recordsets）
+----
+
+8.0版本中使用。
+
+模型(model)和记录(records)通过记录(recordsets)集记交互执行，记录集是某个模型排序好的记录集合。
+
+**警告**:与名称暗示的相反，目前记录集(recordsets)很有可能包含重复记录。在将来可能会有所改变。
+
+定义在模型上的方法将会在记录集上执行，他们的**self**参数是一个记录集：
+
+	class AModel(models.Model):
+		_name="a.model"
+		def a_method(self):
+			self.do_operation()
+在一个记录集上迭代时会yield一个单条记录(单身singletons)的集合,和在python中对string进行yield时产生单个字符的集合一样：
+
+	def do_operation(self):
+		print self	# => a.model(1,3,4,5)
+		for record in self:
+			print record # => a.model(1),then a.model(2), then a.model(3)
+
+###字段访问
+记录集提供了一个“活动记录“接口：模型的字段可以直接在记录上读取和修改，但他仅限于singletons(单条的记录的recordsets)。为一个字段赋值时会触发数据库的更新操作:
+
+	record.name
+	record.company_id.name
+	record.name="Bob"
+在多条记录的recordsets上读取或赋值会引发错误。
+
+访问关系字段时也返回recordset(Many2one,One2many,Many2many)，如果没有值则返回空。
+
+**警告**:为每一个字段赋值时都会触发更新数据库的操作，当需要更改多个字段值或一个修改多条记录(都设成一样的值)时应该使用**write**。
+	
+	# 3 * len(records)次数据库更新
+	for record in records:
+		record.a = 1
+		record.b = 2
+		record.c = 3
+	#len(records)次数据库更新
+	for record in records:
+		record.write({'a':1,'b':2,'c':3})
+	#1次数据库更新
+	records.write({'a':1,'b':2,'c':3})
+
+### 集合操作
+Recordsets是不可变的，但是可以对同一种模型的集合进行操作，返回结果也是一个recordsets。集合操作不保证记录顺序。
+
+* record in set	 	判断**record(必须是只有一条记录的recordset)**是否在**set**中存在
+* record not in set 	是上面**in**的反操作
+* set1 | set2			返回两个集合中所有的元素
+* set1 & set2			返回两个集合中相同的元素
+* set1 - set2 			返回**set1**中排除掉 **set2**中记录的元素
+
+### 其他记录集操作
+Recordsets are iterable so the usual Python tools are available for transformation (map(), sorted(), ifilter(), ...) however these return either a list or an iterator, removing the ability to call methods on their result, or to use set operations.
+
+因此**recordsets**提供下面的操作以返回recordsets本身(如果可能的话):
+
+* filtered()
+	
+返回满足谓词函数中条件的记录集。谓词函数也可以是一个布尔类型的字段(作为字符串传入)。
+	
+	#只保留是自己公司的记录
+	records.filtered(lambda r: r.company_id ==user.company_id )
+	#只保留是公司的记录
+	records.filtered("patner_id.is_company")		
+* sorted()
+
+根据函数提供的键值进行排序，返回结果集。如果没有提供键值，则使用模型默认的排序方式。
+	
+	#根据名称排序
+	records.sorted(key=lambda r:r.name)
+
+* mapped()
+
+对recordsets中的每一条记录执行指定的函数，如果结果是recordsets的返回recordsets。
+
+	#返回一条两上字段相同的list
+	records.mapped(lambda r: r.field1 + r.field2)
+
+函数可以是提供某个字段值的字符串:
+	
+	#返回名称的列表
+	records.mapped('name')
+	#返回一个partners的recordset
+	record.mapped('partner_id')
+	#returns the union of all partner banks,with duplicates removed
+	#返回recordsets中所有记录的相关银行记录集，并且去掉重复的记录.
+	record.mapped('partner_id.bank_ids')
+
+##Environment(环境)
+---
+
+**Enviroment**保存了ORM需要的各种上下文数据：数据库游标(用来查询数据库)，当前用户（用来检查权限）和当前的上下文(context，保存随意的元数据)。环境同时也保存缓存。
+
+所有的**recordsets**都有一个**Enviroment**，它是不可变的，可以通过env属性访问到当前用户，游标或者是上下文:
+
+	records.env
+	records.env.user
+	records.env.cr
+当在其他的recordset中创建recordset时，环境可以被继承。环境可以在其他recordset中获取一个空的recordset并查询这个模型：
+
+	self.env['res.partner']
+	self.env['res.partner'].search([['is_company','=',True],['customer','=',True]])
+
+##改变环境
+来自记录录的环境可以定制。使用改变后的环境将返回一个记录集的新版本。
+
+**sudo()**
+根据提供的用户集创建一个新的环境，如果没有指定用户则默认使用管理员(绕过安全上下文中的访问权限和规则)，使用新的环境时将回recordset的一个拷贝:
+
+	#作为管理员创建partner对象
+	env['res.partner'].sudo().create({'name':'A partner'})
+	#列出public用户能够看到的partner
+	public = env.ref['base.public_user']
+	env['res.partner'].sudo(public).search([])
+
+**with_context()**
+* 可以采取一个位置参数,取代当前环境的上下文
+* 通过关键字可以任意数量的参数,它被添加到当前环境的上下文或上下文设置在步骤1
+
+	#查找partner,根据指定的时区创建记录
+	env['res.partner'].with_context(tz=a_tz).find_or_create(email_address)
+
+**with_env()**
+	
+完全取代再有环境。
+
+
+<br/>
+<br/>
+<br/>
+
+###常见的ORM方法
+---
+
+**search()**
+
+使用查询domain，返回符合条件的recordset。也可以返回部分(**offset**,**limit**参数)的recordset，可排序：
+
+	#查询当前模型
+	self.search([('is_company','=',True),('customer','=',True)])
+	#限制一条记录
+	self.search([('is_company','=',True)],limit=1).name
+
+注意点：如果仅仅需要查询记录条数或只想知道是否有符合条件的记录，使用**search_count()**更适合
+
+**create()**
+
+使用包含字段名称和值的字典，成功后返回包含被创建记录的recordset：
+
+	self.created({'name':'New name'})
+
+**write()**
+
+使用包含字段名称和值的字典,将它们写入到当前recordset中的所有记录。不返回任何值：
+	
+	self.write({'name':'Newer name'})
+
+**browse()**
+
+使用数据库Id或者Id的列表，返回指定Id的recordset，在外部系统根据Id访问Odoo或者在老的API中调用方法时比较有用。
+	
+	self.browse([7,18,12])
+
+**exists()**
+
+返回一个只包含在数据中存在的记录的recordset。可以用来检查一条记录是否仍然存在。
+
+	if not record.exists():
+		raise Exception('The record has been deleted')		
+或者当一条记录被移除后调用：
+
+	records.may_remove_some()
+	records = records.exists()		
+
+**ref()**
+
+环境的方法，根据提供的额外Id返回记录。
+
+	env.ref('base.group_public')
+	#res.group(2)
+	
+**ensure_one()**
+
+检查当前的recordset是不是单条的，否则的抛出错误
+
+	records.ensure_one()
+	#和下面的语句一样，但更简洁
+	assert len(records)==1,"Expected singleton"	
+	
+	
 #QWeb
+---
 
 QWeb是Odoo中使用的主要模板引擎。它是一个模板引擎，主要用来生成HTML片段或页面。
 
