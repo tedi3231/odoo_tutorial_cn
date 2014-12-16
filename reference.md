@@ -32,7 +32,7 @@
 
 访问关系字段时也返回recordset(Many2one,One2many,Many2many)，如果没有值则返回空。
 
-**警告**:为每一个字段赋值时都会触发更新数据库的操作，当需要更改多个字段值或一个修改多条记录(都设成一样的值)时应该使用**write**。
+**警告**:为每一个字段赋值时都会触发更新数据库的操作，当需要更改多个字段值或一次修改多条记录(都设成一样的值)时应该使用**write**。
 	
 	# 3 * len(records)次数据库更新
 	for record in records:
@@ -106,7 +106,7 @@ Recordsets are iterable so the usual Python tools are available for transformati
 	self.env['res.partner']
 	self.env['res.partner'].search([['is_company','=',True],['customer','=',True]])
 
-##改变环境
+###改变环境
 来自记录录的环境可以定制。使用改变后的环境将返回一个记录集的新版本。
 
 **sudo()**
@@ -134,7 +134,7 @@ Recordsets are iterable so the usual Python tools are available for transformati
 <br/>
 <br/>
 
-###常见的ORM方法
+##常见的ORM方法
 ---
 
 **search()**
@@ -191,8 +191,119 @@ Recordsets are iterable so the usual Python tools are available for transformati
 	records.ensure_one()
 	#和下面的语句一样，但更简洁
 	assert len(records)==1,"Expected singleton"	
+## 创建模型
+----
+
+模型的字段作为模型的属性进行定义：
+
+	from openerp import models,fields
+	class AModel(models.Model):
+		_name = "a.model.name"
+		
+		field1 = fields.Char()
+		
+**注意点**:这就意味着你不能定义一个拥有相同名称的方法和字段，它们会冲突。
+
+默认情况下，字段的标签是大写版本的字段名，也可以由**string**参数来重写：
+
+	field2 = fields.Integer(string="an other field")
+
+更多的字段类型会在字段引用章节介绍。
+
+字段的默认值通过参数定义，可以是一个值 ：
+
+	a_field = fields.Char(default='a value')
+也可以为一个函数:
 	
+	a_field = fields.Char(default=compute_default_value)
 	
+	def compute_default_value(self):
+		return self.get_value()
+
+###计算字段
+
+字段可以通过**compute**参数计算（而不是直接从数据库读取）。**必须将计算的结果赋值给字段**。如果计算依赖其他字段，则应使用**depends()**指定:
+
+	from openerp import api
+	total = fields.Float(compute='_compute_total')
+	
+	@api.depends('value','tax')
+	def _compute_total(self):
+		for record in self:
+			record.total = record.value + record.value * record.tax
+	
+* 依赖可以使用.路径的方式使用子字段
+
+	@api.depends('line_ids.value')
+	def _compute_total(self):
+		for record in self:
+			record.total = sum(line.value for line in record.line_ids)
+* 计算字段默认情况下不保存，当请求的时候才会计算并返回。设置**store=True**参数会将它们保存到数据库并且自动激活查询功能
+* 探索计算字段也可以通过设置**search**参数，它的值是一个能够返回domain的方法的名称:
+
+	upper_name = fields.Char(compute='_compute_upper',search='_search_upper')
+	def _search_upper(self,operator,value):
+		if operator == 'like':
+			operator = 'ilike'
+		return [('name',operator,value)]
+
+* 允许为计算字段设置值，使用**inverse**参数。它是一个和计算相对应的函数的名称，设置对应的字段值：
+
+	document = fields.Char(compute='_get_document',inverse='_set_document')
+	
+	def _get_document(self):
+		for record in self:
+			with open(record.get_document_path()) as f:
+				record.document = f.read()
+	
+	def _set_document(self):
+		for record in self:
+			if not record.document : continue
+			with open(record.get_document_path()) as f:
+				f.write(record.document)
+				
+* 多个计算字段可以使用一个方法同时计算结果，只需要使用同样的方法并对所有涉及的字段赋值即可：
+
+	discount_value = fields.Float(compute='_apply_discount')
+	total = fields.Float(compute='_apply_discount')
+	
+	@depends('value','discount')
+	def _apply_discount(self):
+		for record in self:
+			discount = self.value * self.discount
+			self.discount_value = discount
+			self.total = self.value - discount
+			
+### 依赖字段 
+
+计算字段的一种特殊情况就是依赖字段，它为当前对象提供一个子字段的值。它们通过**related**参数设置，像普通的计算字段一样能够被存储：
+
+	nickname = fields.Char(related='user_id.partner_id.name',store=True)
+
+### onchange:动态更新UI
+
+当用户在表单中选择一个字段值(还没有保存到form中)时，可以用来自动更新基于它的其他字段，如当改变税率或添加一条invoice line的时候能自动更新最终总额。
+
+* 计算字段在后端自动检查和计算，不需要**onchange**
+* 对于非计算字段，**onchange()**装饰器被用来提供一个新的字段值
+
+	@api.onchange('field1','field2')
+	def check_change(self):
+		if self.field1 < self.field2:
+			self.field3 = True
+
+改变会在函数中进行然后将值发送到前端程序，用户就可以看见了。
+
+* 计算字段和新的onchanges接口都不需要在页面上设置就可以被前端调用
+* 可以通过在视图字段中设置 **on_change="0"** 能阻止指定字段的 onchange,当字段在页面上被编辑的时候不会导致任何页面更新，即使存在功能功能字段或者明确指定onchange依赖于那个字段 。
+
+	<field name='name' on_change='0'/>
+
+**注意点**: **onchange**方法工作在虚记录上，这些记录并没有被写到数据库中，只是用来获取哪个值应该被发送到前端。
+
+
+###  低层的SQL	
+
 #QWeb
 ---
 
