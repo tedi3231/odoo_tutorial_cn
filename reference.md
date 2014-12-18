@@ -304,6 +304,20 @@ Recordsets are iterable so the usual Python tools are available for transformati
 
 ###  低层的SQL	
 
+环境的属性**cr**是数据库事务的游标，允许直接招待SQL语句，也可以做一些很难通过ORM实现的查询，或者是考虑到性能问题:
+
+	self.env.cr.execute("some_sql",param1,param2,param3)
+
+因为模型也使用同样的游标，环境中也包含了大量的缓存，如果需要执行更新数据的SQL语句，则必须将缓存设为无效，否则进一步使用模型的时候会导致混乱。
+
+当在SQL中使用**create**,**update**或者**delete**时必须先清理缓存，但**select**操作没有关系。清理缓存可以使用环境的**invalidate_all()**方法。
+
+
+## 旧API的兼容性
+
+
+
+
 #QWeb
 ---
 
